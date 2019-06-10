@@ -1,4 +1,4 @@
-Bushido Bomb is a simple 2 player platform fighter. Its a hobby, open source, home brew project made to run on the nes. The objective is to die the least and the first player to get 9 deaths loose the match. You die in one hit, the idea came from the game Bushido Blade on the PS1. The player’s are bombs and you attack each other with a lit torch. The players and inside jokes on the map the pits are based off the video game website GiantBomb. 
+Bushido Bomb is a simple 2 player platform fighter. Its a hobby, open source, home brew project made to run on the nes. The objective is to die the least and the first player to get 9 deaths loose the match. You die in one hit, the idea came from the game Bushido Blade on the PS1. The playerâ€™s are bombs and you attack each other with a lit torch. The players and inside jokes on the map bomb basement are based off the video game website GiantBomb. 
 
 Controls:
 a: jump
