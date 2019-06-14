@@ -1,6 +1,17 @@
 ;Bushido Bomb
 ;2019 sleepingburrito
 ;
+;a: jump
+;b: attack
+;start: pause
+;select: returns to main menu when in 
+;left/right: move
+;down + attack: block
+;down + jump: fall though platform
+;pressing attack or block before hitting a wall ill make you bounce off the wall if you already have momentum.
+;up + select: start AI for that player
+;Hold up: stops AI
+;
 ; iNES header
 ;
 .segment "HEADER"
@@ -130,6 +141,7 @@ levelCeiling = 10 ;celeling for all level
 		ThePits ;called bomb basement in the title screen
 		PitPlat
 		TooTallTower ;named totally tall on title screen
+		GameStateMax
 .endenum
 gameState: .res 1 ;what map/level/scree/scece your on
 
@@ -215,6 +227,9 @@ playerSpriteTimerStart: .res playerId::playerCountMax ;starting value of the tim
 playerSpriteTimer: .res playerId::playerCountMax
 playerPalletId: .res playerId::playerCountMax
 playerSpriteHide: .res playerId::playerCountMax
+
+playerAI: .res playerId::playerCountMax ;not reset between rounds!
+playerAIbuttonCount: .res playerId::playerCountMax
 
 ;default player values
 StartingPlayerY = 50
@@ -377,6 +392,22 @@ playerFeetSmokeVspeed = 129
 playerDieSpeedMask = %10000011
 playerSpeedMask = %00001111
 
+
+;AI
+;
+attactModeCounter: .res 2
+attactModeStartTime = 2
+
+selectAIOffCount = 30 ;how long to hold up to turn off ai
+attactModeCounterStart = 2 ;based on the high byte
+maxSpeedAi = playerMaxSpeed - 3
+aiMissRate = 25
+
+aiJmpTimer: .res 1
+
+aiGoalX: .res 1
+aiGoalXTimer: .res 1
+
 ;
 ;==ram vars==
 ;
@@ -440,6 +471,18 @@ reset:
 		bit $2002
 		bpl :-
 		
+	;randomize prng start index
+	ldy #$FF
+	:
+		lda 0, y
+		clc
+		adc rngIndex
+		sta rngIndex
+		dey
+		bne :-
+	lda rngIndex
+	tay
+	
 	; clear all RAM to 0
 	lda #0
 	ldx #0
@@ -455,6 +498,10 @@ reset:
 		inx
 		bne :-
 		
+	;save the random you made before
+	tya
+	sta rngIndex
+	
 	; place all sprites offscreen at Y=255
 	jsr ResetSprites
 	
@@ -677,12 +724,7 @@ PpuHelperSkipBlink:
 ;
 ;=== main ===
 ;
-main:
-	;load starting map
-	lda #gameStateEnum::TitleScreen
-	sta gameState
-	jsr LoadLevelData
-	
+main:	
 	;init pause
 	lda #pauseKeyStateEnum::pauseKeyUp
 	sta inPause
@@ -710,6 +752,13 @@ main:
 		cpx #colorPalletSize 
 		bne :-	
 	
+	;load starting menu
+	lda #gameStateEnum::TitleScreen
+	sta gameState
+	jsr LoadLevelData
+	jmp ReturnToMainMenu
+	
+	
 	; main loop
 	;===========
 mainLoop:
@@ -729,6 +778,7 @@ mainLoop:
 	lda gameState
 	cmp #gameStateEnum::TitleScreen
 	bne :+
+		jsr AttactModeMainMenu
 		jsr CursorControls
 		jsr DrawCursor
 		;skip game code if main menu
@@ -786,6 +836,7 @@ endPauseKey:
 	;player state procesing
 	ldx #0
 	:
+		jsr PlayerAIEvent
 		jsr PlayerControls
 		jsr playerStepEvent
 		jsr PlayerPhysics
@@ -860,6 +911,8 @@ DefaultValuesLoopStart:
 		sta playerSpriteHide, y
 		sta playerDeadTimer, y
 		
+		sta playerAIbuttonCount, y
+		
 		;specific values
 		lda #StartingPlayerY
 		sta playerY, y
@@ -911,8 +964,170 @@ defaultPerPlayerValuesEnd:
 		rts
 		
 		
+;======player AI======
+PlayerAIEvent:
+	;stop attract mode if any key is pressed
+	lda playerPad, x
+	and #$FF
+	beq :++
+		;check if attract mode is on
+		lda attactModeCounter + 1
+		beq :+
+			;return to menu
+			jmp ReturnToMainMenu
+		:
+	:
+
+	;exit if not in AI
+	lda playerAI, x
+	bne :+
+		rts
+	:
+	
+	;get other player id
+	txa
+	eor #1
+	tay
+	
+	;give move location goal
+	lda playerX, y
+	sta tmpVarZp
+	
+	;check if attract mode is on
+	;
+	lda attactModeCounter + 1
+	beq PlayerAIEventAttractExit
+	;if so then do random stuff to make it look more intresting
+	txa
+	bne PlayerAIEventAttractExit ;only if your player 1
+	;make player 1 jump random
+	lda aiJmpTimer
+	bne :+
+		lda playerPad
+		ora #PAD_A
+		sta playerPad
+		;reset timer
+		jsr Prng
+		sta aiJmpTimer
+	:
+	dec aiJmpTimer
+	
+	;make player 1
+	lda aiGoalXTimer
+	bne :++
+		;set random location
+		:
+			jsr Prng
+			cmp platfromData + platfromDataEnm::platsGroundStartX
+			beq :-
+			cmp platfromData + platfromDataEnm::platsGroundEndX
+			bcs :-
+			
+		sta aiGoalX
+		
+		;reset timer
+		jsr Prng
+		sta aiGoalXTimer
+	:
+	dec aiGoalXTimer
+	
+	;set where player 1 should move
+	lda aiGoalX
+	sta tmpVarZp
+	
+PlayerAIEventAttractExit:
+	
+	
+	;when toching other player
+	;
+	jsr PlayerTestOverlap
+	beq PlayerAIEventTouchExit
+	
+	
+	;in ai attact Mode somtimes fail to block or attack
+	lda attactModeCounter + 1
+	beq :+
+		jsr Prng
+		cmp #aiMissRate
+		bcc :+
+			jmp PlayerAIEventTouchExit
+		:
+	:
+	
+	;see if other player is attacking block
+	lda playerAttackingTimer, y
+	beq :+
+		lda playerPad, x
+		ora #PAD_D
+		ora #PAD_B
+		sta playerPad, x
+		
+		jmp PlayerAIEventTouchExit
+	:
+
+	;attack
+	lda playerPad, x
+	ora #PAD_B
+	sta playerPad, x
+	
+PlayerAIEventTouchExit:
+	
+	;vspeed
+	;
+	;jump if they are ontop
+	lda playerY, x
+	cmp PlayerBottom, y
+	bcc :+ ;<
+		lda playerPad, x
+		ora #PAD_A
+		sta playerPad, x
+	:
+	
+	;fall though other player under if under
+	lda PlayerBottom, x
+	cmp playerY, y
+	bcs :+ ;>
+		lda playerPad, x
+		ora #PAD_D
+		ora #PAD_A
+		sta playerPad, x
+	:
+	
+	;hspeed
+	;
+	;check speed limit
+	lda leftSpeed, x
+	clc
+	adc rightSpeed, x
+	lsr
+	lsr
+	lsr
+	lsr
+	cmp #maxSpeedAi
+	bcs PlayerAIHspeedExit
+	
+	lda playerX, x
+	cmp tmpVarZp
+	bcs :+ ;>	
+		;move left
+		lda playerPad, x
+		ora #PAD_R
+		jmp :++
+	:
+		;move right
+		lda playerPad, x
+		ora #PAD_L
+	:
+	sta playerPad, x
+PlayerAIHspeedExit:
+	
+	
+	rts
+		
+		
 ;==============
 PlayerControls:
+
 	;check movecooldown
 	lda playerMoveCooldown, x
 	beq :+
@@ -922,8 +1137,13 @@ PlayerControls:
 	;up
 	lda playerPad, x
 	and #PAD_U
-	beq :+
-
+	beq :++
+		lda playerPad, x
+		and #PAD_SELECT
+		beq :+
+			lda #bool::true
+			sta playerAI, x
+		:
 	:
 	
 	
@@ -948,6 +1168,7 @@ PlayerControls:
 		
 		lda #blockTimerCooldown
 		sta playerBlockCooldown, x
+		
 		rts
 		
 		;test if down + jump to fall though platfroms
@@ -1114,12 +1335,22 @@ playerContolsJump:
 		jsr playerFeetSmoke
 playerContolsSkipJump:
 	
-	;select
+	;select, turns off ai
 	lda playerPad, x
 	and #PAD_SELECT
 	beq :+
-		;
+		inc playerAIbuttonCount
+		lda playerAIbuttonCount
+		cmp #selectAIOffCount
+		bne playerContolsHoldSelectReset
+		
+		lda #bool::false
+		sta playerAI, x 
 	:
+	;reset counter
+	lda #0
+	sta playerAIbuttonCount, x
+playerContolsHoldSelectReset:
 	
 	rts
 	
@@ -2665,6 +2896,10 @@ CursorControlsMoveExit:
 		dec cursorIndex
 		lda #cursorPauseAmount
 		sta playerDeadTimer
+		
+		lda #0
+		sta attactModeCounter
+		sta attactModeCounter + 1
 	:
 	
 	;down
@@ -2675,6 +2910,10 @@ CursorControlsMoveExit:
 		inc cursorIndex
 		lda #cursorPauseAmount
 		sta playerDeadTimer
+		
+		lda #0
+		sta attactModeCounter
+		sta attactModeCounter + 1
 	:
 
 	;keep cursor in range
@@ -2692,9 +2931,14 @@ CursorControlsMoveExit:
 	;if they select a map start it
 	lda playerPad
 	ora playerPad + 1
-	and #PAD_SELECT + PAD_B + PAD_START
+	and #PAD_SELECT + PAD_B + PAD_START + PAD_A
 	beq CursorControlsLoadMapExit
 
+	;reset counter attactModeCounter
+	lda #0
+	sta attactModeCounter
+	sta attactModeCounter + 1
+	
 	;play sound
 	lda #jumpSoundLength
 	sta audioTimer
@@ -2717,29 +2961,78 @@ CursorControlsMoveExit:
 		lda #gameStateEnum::ThePits
 	:
 CursorControlsLoadMap:
-		;load level data
-		sta gameState
-		jsr LoadLevelData
-		
-		;hide menu graphics
-		jsr ResetSprites
-		
-		;set player data
-		jsr SetPlayerDefaultValues
-		
-		;pause player at start
-		lda #gameStartEndTimerAmount
-		sta playerMoveCooldown
-		sta playerMoveCooldown + 1
-		;set start game timer
-		sta gameStartTimer
-		
-		;set pause key state, so you dont pause once you enter the game
-		ldx #pauseKeyStateEnum::pauseKeyDown
-		stx pauseKeyState
+	jsr StartMapFromMenu
+
 CursorControlsLoadMapExit:
 	rts
 
+
+;startMap
+StartMapFromMenu:
+	;put map id in a
+	
+	;load level data
+	sta gameState
+	jsr LoadLevelData
+
+	;hide menu graphics
+	jsr ResetSprites
+
+	;set player data
+	jsr SetPlayerDefaultValues
+
+	;pause player at start
+	lda #gameStartEndTimerAmount
+	sta playerMoveCooldown
+	sta playerMoveCooldown + 1
+	;set start game timer
+	sta gameStartTimer
+
+	;set pause key state, so you dont pause once you enter the game
+	ldx #pauseKeyStateEnum::pauseKeyDown
+	stx pauseKeyState
+	
+	rts
+
+	
+;==========
+AttactModeMainMenu:
+	;counter to start attact mode
+	inc attactModeCounter
+	bne AttactModeMainMenuNoInc
+		inc attactModeCounter + 1
+		lda attactModeCounter + 1
+		cmp #attactModeStartTime
+		bne AttactModeMainMenuNoStart
+			;start a random map
+			
+			;fix stack
+			
+			;turn on AI
+			lda #bool::true
+			sta playerAI
+			sta playerAI + 1
+			
+			;load random level
+			jsr Prng
+			and #%000000001
+			beq :+
+				lda #gameStateEnum::PitPlat
+				jmp :++
+			:
+				lda #gameStateEnum::TooTallTower
+			:
+
+			jsr StartMapFromMenu
+			
+AttactModeMainMenuLoadGame:
+AttactModeMainMenuNoStart:
+AttactModeMainMenuNoInc:
+	
+	rts
+	
+	
+	
 ;============
 ResetSprites:		
 	;kills a and y
@@ -2774,7 +3067,20 @@ ReturnToMainMenu:
 	sta gameState
 	jsr LoadLevelData
 	
-	;clear stack
+	;turn off AI from attact mode
+	lda attactModeCounter + 1
+	beq :+
+		lda #bool::false
+		sta playerAI
+		sta playerAI + 1
+	:
+	
+	;reset counter attactModeCounter
+	lda #0
+	sta attactModeCounter
+	sta attactModeCounter + 1
+	
+	;end
 	jmp mainLoop
 	
 
