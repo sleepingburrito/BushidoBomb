@@ -8,6 +8,8 @@ select: returns to main menu when in pause
 left/right: move
 down + attack: block
 down + jump: fall though platform
+up + select: starts AI mode (AI is more for demo)
+Holding Select: stops AI mode
 
 pressing attack or block before hitting a wall will make you bounce off the wall if you already have momentum.
 
