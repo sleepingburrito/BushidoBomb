@@ -1045,13 +1045,10 @@ PlayerAIEventAttractExit:
 	
 	
 	;in ai attact Mode somtimes fail to block or attack
-	lda attactModeCounter + 1
-	beq :+
-		jsr Prng
-		cmp #aiMissRate
-		bcc :+
-			jmp PlayerAIEventTouchExit
-		:
+	jsr Prng
+	cmp #aiMissRate
+	bcc :+
+		jmp PlayerAIEventTouchExit
 	:
 	
 	;see if other player is attacking block
@@ -1339,8 +1336,8 @@ playerContolsSkipJump:
 	lda playerPad, x
 	and #PAD_SELECT
 	beq :+
-		inc playerAIbuttonCount
-		lda playerAIbuttonCount
+		inc playerAIbuttonCount, x
+		lda playerAIbuttonCount, x
 		cmp #selectAIOffCount
 		bne playerContolsHoldSelectReset
 		
